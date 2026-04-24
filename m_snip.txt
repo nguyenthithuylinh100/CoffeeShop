@@ -1,0 +1,25 @@
+314|function InventoryTab() {
+315|  const { toast } = useToast()
+316|  const [items, setItems]       = useState([])
+317|  const [search, setSearch]     = useState('')
+318|  const [filterStatus, setFilterStatus] = useState('all') // 'all' | 'low' | 'ok'
+319|  const [inputs, setInputs]     = useState({})  // { id: { value, mode } }
+320|  const [form, setForm]         = useState({ ingredient_name: '', quantity: '', unit: '', min_quantity: '' })
+321|  const [showForm, setShowForm] = useState(false)
+322|
+323|  const load = async () => { const r = await api.get('/inventory'); setItems(r.data) }
+324|  useEffect(() => { load() }, [])
+325|
+326|  // Lọc + tìm kiếm kho
+327|  const filtered = useMemo(() => {
+328|    return items.filter(item => {
+329|      const matchSearch = !search ||
+330|        item.ingredient_name.toLowerCase().includes(search.toLowerCase()) ||
+331|        (item.unit || '').toLowerCase().includes(search.toLowerCase())
+332|      const matchStatus =
+333|        filterStatus === 'all' ||
+334|        (filterStatus === 'low' &&  item.is_low) ||
+335|        (filterStatus === 'ok'  && !item.is_low)
+336|      return matchSearch && matchStatus
+337|    })
+338|  }, [items, search, filterStatus])
