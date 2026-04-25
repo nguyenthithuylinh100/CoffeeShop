@@ -8,6 +8,9 @@ import {
   RefreshCw,
   Coffee,
   CheckCircle2,
+  FlaskConical,
+  X,
+  Loader2,
 } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import { SkeletonOrderCards } from '../components/Skeleton'
@@ -70,6 +73,123 @@ const URGENCY = {
     qtyBg:     'bg-red-100 text-red-700',
     cardExtra: 'urgency-critical',
   },
+}
+
+/* ── Modal nguyên liệu ───────────────────────────────────────────────────── */
+function IngredientModal({ item, quantity, onClose }) {
+  const [loading, setLoading]       = useState(true)
+  const [ingredients, setIngredients] = useState([])
+  const [error, setError]           = useState(null)
+
+  useEffect(() => {
+    if (!item?.menu_item_id) return
+    setLoading(true)
+    setError(null)
+    api.get(`/menu/${item.menu_item_id}/ingredients`)
+      .then(res => {
+        setIngredients(res.data.ingredients || [])
+      })
+      .catch(() => setError('Không tải được nguyên liệu'))
+      .finally(() => setLoading(false))
+  }, [item?.menu_item_id])
+
+  // Close on backdrop click
+  const handleBackdrop = (e) => {
+    if (e.target === e.currentTarget) onClose()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={handleBackdrop}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-4 flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <FlaskConical className="h-5 w-5 text-white shrink-0" strokeWidth={2} />
+            <div className="min-w-0">
+              <p className="text-white font-bold text-base leading-snug truncate">
+                {item?.name}
+              </p>
+              <p className="text-emerald-100 text-xs mt-0.5">
+                Số lượng gọi: <span className="font-bold text-white">{quantity}</span> phần
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-white/70 hover:text-white transition-colors shrink-0 mt-0.5"
+          >
+            <X className="h-5 w-5" strokeWidth={2} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5">
+          {loading ? (
+            <div className="flex flex-col items-center gap-3 py-6 text-gray-400">
+              <Loader2 className="h-7 w-7 animate-spin" strokeWidth={2} />
+              <p className="text-sm">Đang tải nguyên liệu...</p>
+            </div>
+          ) : error ? (
+            <div className="text-center py-6">
+              <p className="text-red-500 text-sm">{error}</p>
+            </div>
+          ) : ingredients.length === 0 ? (
+            <div className="text-center py-6">
+              <FlaskConical className="h-10 w-10 text-gray-200 mx-auto mb-2" strokeWidth={1.5} />
+              <p className="text-gray-400 text-sm">Món này chưa có thông tin nguyên liệu</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-gray-400 mb-3 font-medium uppercase tracking-wide">
+                Nguyên liệu cho {quantity} phần
+              </p>
+              <div className="space-y-2">
+                {ingredients.map((ing, idx) => {
+                  const totalQty = (parseFloat(ing.quantity_used) * quantity).toFixed(2)
+                  // Remove trailing zeros: "1.50" → "1.5", "2.00" → "2"
+                  const displayQty = parseFloat(totalQty).toString()
+                  const perQty = parseFloat(ing.quantity_used).toString()
+
+                  return (
+                    <div
+                      key={ing.inventory_id ?? idx}
+                      className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl px-4 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-gray-800 text-sm truncate">
+                          {ing.ingredient_name}
+                        </p>
+                        {quantity > 1 && (
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {perQty} {ing.unit} × {quantity}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="bg-emerald-100 text-emerald-700 font-bold text-sm px-3 py-1 rounded-lg tabular-nums">
+                          {displayQty}
+                        </span>
+                        {ing.unit && (
+                          <p className="text-xs text-gray-400 mt-0.5">{ing.unit}</p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-center text-xs text-gray-300 mt-4">
+                Nhấn ra ngoài để đóng
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /* Swipe-to-complete — callback ref + layout effect để luôn gắn listener khi DOM sẵn sàng */
@@ -140,7 +260,7 @@ function useSwipe(onComplete) {
   return setNode
 }
 
-function OrderCard({ order, onComplete, completing }) {
+function OrderCard({ order, onComplete, completing, onItemClick }) {
   const level = urgency(order.created_at)
   const st    = URGENCY[level]
   const mins  = waitMins(order.created_at)
@@ -204,9 +324,17 @@ function OrderCard({ order, onComplete, completing }) {
                   {item.quantity}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-800 text-sm break-words leading-snug">
-                    {item.name || 'Món'}
-                  </p>
+                  {/* Tên món — click để xem nguyên liệu */}
+                  <button
+                    type="button"
+                    onMouseDown={e => e.stopPropagation()}
+                    onTouchStart={e => e.stopPropagation()}
+                    onClick={e => { e.stopPropagation(); onItemClick(item) }}
+                    className="font-semibold text-gray-800 text-sm break-words leading-snug text-left w-full hover:text-emerald-600 transition-colors group flex items-center gap-1"
+                  >
+                    <span className="flex-1">{item.name || 'Món'}</span>
+                    <FlaskConical className="h-3.5 w-3.5 text-gray-300 group-hover:text-emerald-500 shrink-0 transition-colors" strokeWidth={2} />
+                  </button>
                   {item.note && (
                     <div className="mt-0.5 inline-flex max-w-full items-start gap-1.5 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-2 py-0.5 break-words">
                       <StickyNote className="h-3.5 w-3.5 shrink-0 mt-0.5" strokeWidth={2} />
@@ -218,6 +346,13 @@ function OrderCard({ order, onComplete, completing }) {
               ))
             )}
           </div>
+
+          {order.items?.length > 0 && (
+            <p className="text-xs text-gray-300 text-center mb-2 flex items-center justify-center gap-1">
+              <FlaskConical className="h-3 w-3" strokeWidth={2} />
+              Nhấn tên món để xem nguyên liệu
+            </p>
+          )}
 
           <button
             type="button"
@@ -253,6 +388,8 @@ export default function BaristaPage() {
   const [completing, setCompleting] = useState({})
   const [countdown, setCountdown]   = useState(REFRESH_INTERVAL)
   const [lastRefresh, setLastRefresh] = useState(null)
+  // Modal nguyên liệu
+  const [modalItem, setModalItem]   = useState(null) // { menu_item_id, name, quantity }
   const intervalRef = useRef(null)
   const { success, error: toastError } = useToast()
 
@@ -293,6 +430,14 @@ export default function BaristaPage() {
       setCompleting(prev => ({ ...prev, [orderId]: false }))
     }
   }, [success, toastError, loadOrders])
+
+  const handleItemClick = useCallback((item) => {
+    setModalItem({
+      menu_item_id: item.menu_item_id,
+      name:         item.name,
+      quantity:     item.quantity,
+    })
+  }, [])
 
   const criticalCount = orders.filter(o => urgency(o.created_at) === 'critical').length
   const warningCount  = orders.filter(o => urgency(o.created_at) === 'warning').length
@@ -372,6 +517,7 @@ export default function BaristaPage() {
                 order={order}
                 onComplete={() => handleComplete(order.order_id)}
                 completing={!!completing[order.order_id]}
+                onItemClick={handleItemClick}
               />
             ))}
           </div>
@@ -384,6 +530,15 @@ export default function BaristaPage() {
           </p>
         )}
       </div>
+
+      {/* Modal nguyên liệu */}
+      {modalItem && (
+        <IngredientModal
+          item={modalItem}
+          quantity={modalItem.quantity}
+          onClose={() => setModalItem(null)}
+        />
+      )}
     </div>
   )
 }

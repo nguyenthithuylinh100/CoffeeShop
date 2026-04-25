@@ -86,16 +86,23 @@ function SearchBox({ value, onChange, placeholder = 'Tìm kiếm...' }) {
 function MenuTab() {
   const [items, setItems]           = useState([])
   const [search, setSearch]         = useState('')
-  const [filterCat, setFilterCat]   = useState('all')    // 'all' | category name
-  const [filterAvail, setFilterAvail] = useState('all')  // 'all' | 'available' | 'unavailable'
+  const [filterCat, setFilterCat]   = useState('all')
+  const [filterAvail, setFilterAvail] = useState('all')
   const [form, setForm]             = useState({ name: '', price: '', category: '', is_available: true })
   const [editing, setEditing]       = useState(null)
   const [showForm, setShowForm]     = useState(false)
   const [errors, setErrors]         = useState({})
+  // Nguyên liệu
+  const [inventory, setInventory]   = useState([])           // danh sách kho để chọn
+  const [ingRows, setIngRows]       = useState([])           // [{ inventory_id, quantity_used, _key }]
+  const [ingLoading, setIngLoading] = useState(false)
   const { toast: showToast } = useToast()
 
   const load = async () => { const r = await api.get('/menu/all'); setItems(r.data) }
-  useEffect(() => { load() }, [])
+  const loadInventory = async () => {
+    try { const r = await api.get('/inventory'); setInventory(r.data) } catch {}
+  }
+  useEffect(() => { load(); loadInventory() }, [])
 
   // Tất cả category từ dữ liệu
   const allCategories = useMemo(() => [...new Set(items.map(i => i.category || 'Khác'))], [items])
@@ -130,6 +137,11 @@ function MenuTab() {
     const e = {}
     if (!form.name.trim())        e.name  = 'Tên món không được trống'
     if (!form.price || +form.price <= 0) e.price = 'Giá phải lớn hơn 0'
+    // Validate ingredient rows: mỗi dòng phải chọn nguyên liệu và số lượng > 0
+    ingRows.forEach((row, idx) => {
+      if (!row.inventory_id) e[`ing_id_${idx}`] = 'Chọn nguyên liệu'
+      if (!row.quantity_used || +row.quantity_used <= 0) e[`ing_qty_${idx}`] = 'Nhập số lượng'
+    })
     setErrors(e)
     return !Object.keys(e).length
   }
@@ -138,28 +150,51 @@ function MenuTab() {
     ev.preventDefault()
     if (!validate()) return
     try {
+      let menuItemId = editing
       if (editing) {
         await api.put(`/menu/${editing}`, { ...form, price: parseFloat(form.price) })
         showToast('Cập nhật món thành công')
-        setEditing(null)
       } else {
-        await api.post('/menu', { ...form, price: parseFloat(form.price) })
+        const res = await api.post('/menu', { ...form, price: parseFloat(form.price) })
+        menuItemId = res.data.menu_item_id
         showToast('Thêm món mới thành công')
       }
+      // Lưu nguyên liệu (dù có hay không có dòng nào)
+      await api.put(`/menu/${menuItemId}/ingredients`, {
+        ingredients: ingRows
+          .filter(r => r.inventory_id && +r.quantity_used > 0)
+          .map(r => ({ inventory_id: +r.inventory_id, quantity_used: +r.quantity_used })),
+      })
       setForm({ name: '', price: '', category: '', is_available: true })
+      setIngRows([])
       setErrors({})
       setShowForm(false)
+      setEditing(null)
       load()
     } catch (err) {
       showToast(err.response?.data?.error || 'Lỗi', 'error')
     }
   }
 
-  const handleEdit = item => {
+  const handleEdit = async item => {
     setForm({ name: item.name, price: item.price, category: item.category || '', is_available: item.is_available })
     setEditing(item.menu_item_id)
     setErrors({})
     setShowForm(true)
+    // Tải nguyên liệu hiện tại của món
+    setIngLoading(true)
+    try {
+      const res = await api.get(`/menu/${item.menu_item_id}/ingredients`)
+      setIngRows((res.data.ingredients || []).map((ing, i) => ({
+        inventory_id:  ing.inventory_id,
+        quantity_used: ing.quantity_used,
+        _key: Date.now() + i,
+      })))
+    } catch {
+      setIngRows([])
+    } finally {
+      setIngLoading(false)
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -175,6 +210,19 @@ function MenuTab() {
     showToast('Đã xoá')
     load()
   }
+
+  // ── Ingredient row helpers ──────────────────────────────────────────────
+  const addIngRow = () =>
+    setIngRows(rows => [...rows, { inventory_id: '', quantity_used: '', _key: Date.now() }])
+
+  const removeIngRow = key =>
+    setIngRows(rows => rows.filter(r => r._key !== key))
+
+  const updateIngRow = (key, field, value) =>
+    setIngRows(rows => rows.map(r => r._key === key ? { ...r, [field]: value } : r))
+
+  // Các nguyên liệu đã chọn trong form (tránh chọn trùng)
+  const usedInventoryIds = new Set(ingRows.map(r => String(r.inventory_id)).filter(Boolean))
 
   return (
     <div>
@@ -213,7 +261,8 @@ function MenuTab() {
               <span className="inline-flex items-center gap-2"><Plus className="h-5 w-5" strokeWidth={2} /> Thêm món mới</span>
             )}
           </h3>
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* ── Thông tin cơ bản ── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-gray-600 mb-1 block">Tên món *</label>
@@ -260,8 +309,107 @@ function MenuTab() {
                 </label>
               </div>
             </div>
+
+            {/* ── Nguyên liệu ── */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                  Nguyên liệu thành phần
+                </label>
+                <button
+                  type="button"
+                  onClick={addIngRow}
+                  className="text-xs inline-flex items-center gap-1 text-amber-700 hover:text-amber-800 font-semibold"
+                >
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2.5} /> Thêm nguyên liệu
+                </button>
+              </div>
+
+              {ingLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-400 py-3">
+                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> Đang tải...
+                </div>
+              ) : ingRows.length === 0 ? (
+                <div
+                  className="border-2 border-dashed border-gray-200 rounded-xl py-4 text-center cursor-pointer hover:border-amber-300 hover:bg-amber-50 transition-colors"
+                  onClick={addIngRow}
+                >
+                  <Package className="h-7 w-7 text-gray-300 mx-auto mb-1" strokeWidth={1.5} />
+                  <p className="text-xs text-gray-400">Nhấn để thêm nguyên liệu</p>
+                  <p className="text-xs text-gray-300 mt-0.5">Bỏ qua nếu món không cần quản lý kho</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {ingRows.map((row, idx) => {
+                    const selInv = inventory.find(i => String(i.inventory_id) === String(row.inventory_id))
+                    return (
+                      <div key={row._key} className="flex items-start gap-2">
+                        {/* Chọn nguyên liệu */}
+                        <div className="flex-1 min-w-0">
+                          <select
+                            className={`input-field text-sm ${errors[`ing_id_${idx}`] ? 'border-red-400' : ''}`}
+                            value={row.inventory_id}
+                            onChange={e => updateIngRow(row._key, 'inventory_id', e.target.value)}
+                          >
+                            <option value="">-- Chọn nguyên liệu --</option>
+                            {inventory.map(inv => (
+                              <option
+                                key={inv.inventory_id}
+                                value={inv.inventory_id}
+                                disabled={usedInventoryIds.has(String(inv.inventory_id)) && String(inv.inventory_id) !== String(row.inventory_id)}
+                              >
+                                {inv.ingredient_name} (tồn: {inv.quantity} {inv.unit || ''})
+                              </option>
+                            ))}
+                          </select>
+                          {errors[`ing_id_${idx}`] && (
+                            <p className="text-red-500 text-xs mt-0.5">{errors[`ing_id_${idx}`]}</p>
+                          )}
+                        </div>
+                        {/* Số lượng + đơn vị */}
+                        <div className="w-32 shrink-0">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number" min="0" step="any"
+                              className={`input-field text-sm text-center ${errors[`ing_qty_${idx}`] ? 'border-red-400' : ''}`}
+                              value={row.quantity_used}
+                              onChange={e => updateIngRow(row._key, 'quantity_used', e.target.value)}
+                              placeholder="SL"
+                            />
+                            {selInv?.unit && (
+                              <span className="text-xs text-gray-500 font-medium whitespace-nowrap shrink-0">
+                                {selInv.unit}
+                              </span>
+                            )}
+                          </div>
+                          {errors[`ing_qty_${idx}`] && (
+                            <p className="text-red-500 text-xs mt-0.5">{errors[`ing_qty_${idx}`]}</p>
+                          )}
+                        </div>
+                        {/* Xóa dòng */}
+                        <button
+                          type="button"
+                          onClick={() => removeIngRow(row._key)}
+                          className="text-gray-300 hover:text-red-400 transition-colors mt-2 shrink-0"
+                        >
+                          <X className="h-4 w-4" strokeWidth={2} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    onClick={addIngRow}
+                    className="text-xs text-amber-600 hover:text-amber-700 font-medium inline-flex items-center gap-1 mt-1"
+                  >
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} /> Thêm dòng
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 pt-1">
-              <button type="button" onClick={() => { setShowForm(false); setEditing(null) }} className="btn-secondary flex-1">Hủy</button>
+              <button type="button" onClick={() => { setShowForm(false); setEditing(null); setIngRows([]) }} className="btn-secondary flex-1">Hủy</button>
               <button type="submit" className="btn-primary flex-1">{editing ? 'Lưu thay đổi' : 'Thêm mới'}</button>
             </div>
           </form>

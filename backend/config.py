@@ -13,18 +13,7 @@ class Config:
     JWT_EXPIRY_HOURS = 8
     CORS_ORIGINS = _csv_env('CORS_ORIGINS', 'http://localhost:3000')
 
-    params = urllib.parse.quote_plus(
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=THUYLINH\\SQLEXPRESS;"
-        "DATABASE=CoffeeShop;"
-        "Trusted_Connection=yes;"
-        "TrustServerCertificate=yes;"
-    )
-
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL',
-        f"mssql+pyodbc:///?odbc_connect={params}"
-    )
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     SMTP_HOST = os.environ.get('SMTP_HOST')
